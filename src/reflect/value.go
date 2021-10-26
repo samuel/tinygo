@@ -16,7 +16,7 @@ const (
 )
 
 type Value struct {
-	typecode rawType
+	typecode *rawType
 	value    unsafe.Pointer
 	flags    valueFlags
 }
@@ -43,15 +43,15 @@ func Indirect(v Value) Value {
 }
 
 //go:linkname composeInterface runtime.composeInterface
-func composeInterface(rawType, unsafe.Pointer) interface{}
+func composeInterface(unsafe.Pointer, unsafe.Pointer) interface{}
 
 //go:linkname decomposeInterface runtime.decomposeInterface
-func decomposeInterface(i interface{}) (rawType, unsafe.Pointer)
+func decomposeInterface(i interface{}) (unsafe.Pointer, unsafe.Pointer)
 
 func ValueOf(i interface{}) Value {
 	typecode, value := decomposeInterface(i)
 	return Value{
-		typecode: typecode,
+		typecode: (*rawType)(typecode),
 		value:    value,
 		flags:    valueFlagExported,
 	}
@@ -84,7 +84,7 @@ func valueInterfaceUnsafe(v Value) interface{} {
 		}
 		v.value = unsafe.Pointer(value)
 	}
-	return composeInterface(v.typecode, v.value)
+	return composeInterface(unsafe.Pointer(v.typecode), v.value)
 }
 
 func (v Value) Type() Type {
@@ -95,7 +95,7 @@ func (v Value) Type() Type {
 //
 // RawType returns the raw, underlying type code. It is used in the runtime
 // package and needs to be exported for the runtime package to access it.
-func (v Value) RawType() rawType {
+func (v Value) RawType() *rawType {
 	return v.typecode
 }
 
@@ -158,7 +158,7 @@ func (v Value) pointer() unsafe.Pointer {
 }
 
 func (v Value) IsValid() bool {
-	return v.typecode != 0
+	return v.typecode != nil
 }
 
 func (v Value) CanInterface() bool {
@@ -403,7 +403,7 @@ func (v Value) Elem() Value {
 	case Interface:
 		typecode, value := decomposeInterface(*(*interface{})(v.value))
 		return Value{
-			typecode: typecode,
+			typecode: (*rawType)(typecode),
 			value:    value,
 			flags:    v.flags &^ valueFlagIndirect,
 		}
@@ -473,6 +473,8 @@ func (v Value) Field(i int) Value {
 	}
 }
 
+var uint8Type = TypeOf(uint8(0)).(*rawType)
+
 func (v Value) Index(i int) Value {
 	switch v.Kind() {
 	case Slice:
@@ -497,7 +499,7 @@ func (v Value) Index(i int) Value {
 			panic("reflect: string index out of range")
 		}
 		return Value{
-			typecode: Uint8.basicType(),
+			typecode: uint8Type,
 			value:    unsafe.Pointer(uintptr(*(*uint8)(unsafe.Pointer(uintptr(s.data) + uintptr(i))))),
 		}
 	case Array:
@@ -749,7 +751,7 @@ func Zero(typ Type) Value {
 // new value of the given type.
 func New(typ Type) Value {
 	return Value{
-		typecode: PtrTo(typ).(rawType),
+		typecode: PtrTo(typ).(*rawType),
 		value:    alloc(typ.Size(), nil),
 		flags:    valueFlagExported,
 	}

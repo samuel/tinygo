@@ -98,3 +98,15 @@ func typeHasPointers(t llvm.Type) bool {
 		return false
 	}
 }
+
+func stripPointerCasts(v llvm.Value) llvm.Value {
+	for !v.IsAConstantExpr().IsNil() {
+		opcode := v.Opcode()
+		if opcode == llvm.GetElementPtr || opcode == llvm.BitCast {
+			v = v.Operand(0)
+			continue
+		}
+		break
+	}
+	return v
+}

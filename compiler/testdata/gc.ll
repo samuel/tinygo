@@ -3,9 +3,7 @@ source_filename = "gc.go"
 target datalayout = "e-m:e-p:32:32-i64:64-n32:64-S128-ni:1:10:20"
 target triple = "wasm32-unknown-wasi"
 
-%runtime.typecodeID = type { %runtime.typecodeID*, i32, %runtime.interfaceMethodInfo*, %runtime.typecodeID*, i32 }
-%runtime.interfaceMethodInfo = type { i8*, i32 }
-%runtime._interface = type { i32, i8* }
+%runtime._interface = type { i8*, i8* }
 
 @main.scalar1 = hidden global i8* null, align 4
 @main.scalar2 = hidden global i32* null, align 4
@@ -23,8 +21,8 @@ target triple = "wasm32-unknown-wasi"
 @main.slice3 = hidden global { { i8*, i32, i32 }*, i32, i32 } zeroinitializer, align 8
 @"runtime/gc.layout:62-2000000000000001" = linkonce_odr unnamed_addr constant { i32, [8 x i8] } { i32 62, [8 x i8] c" \00\00\00\00\00\00\01" }
 @"runtime/gc.layout:62-0001" = linkonce_odr unnamed_addr constant { i32, [8 x i8] } { i32 62, [8 x i8] c"\00\00\00\00\00\00\00\01" }
-@"reflect/types.type:basic:complex128" = linkonce_odr constant %runtime.typecodeID { %runtime.typecodeID* null, i32 0, %runtime.interfaceMethodInfo* null, %runtime.typecodeID* @"reflect/types.type:pointer:basic:complex128", i32 0 }
-@"reflect/types.type:pointer:basic:complex128" = linkonce_odr constant %runtime.typecodeID { %runtime.typecodeID* @"reflect/types.type:basic:complex128", i32 0, %runtime.interfaceMethodInfo* null, %runtime.typecodeID* null, i32 0 }
+@"reflect/types.type:basic:complex128" = linkonce_odr constant { i8, i8* } { i8 16, i8* getelementptr inbounds ({ i8, i8* }, { i8, i8* }* @"reflect/types.type:pointer:basic:complex128", i32 0, i32 0) }, align 4
+@"reflect/types.type:pointer:basic:complex128" = linkonce_odr constant { i8, i8* } { i8 21, i8* getelementptr inbounds ({ i8, i8* }, { i8, i8* }* @"reflect/types.type:basic:complex128", i32 0, i32 0) }, align 4
 
 declare noalias nonnull i8* @runtime.alloc(i32, i8*, i8*)
 
@@ -127,7 +125,8 @@ entry:
   %.repack1 = getelementptr inbounds i8, i8* %0, i32 8
   %1 = bitcast i8* %.repack1 to double*
   store double %v.i, double* %1, align 8
-  %2 = insertvalue %runtime._interface { i32 ptrtoint (%runtime.typecodeID* @"reflect/types.type:basic:complex128" to i32), i8* undef }, i8* %0, 1
+  %2 = insertvalue %runtime._interface { i8* getelementptr inbounds ({ i8, i8* }, { i8, i8* }* @"reflect/types.type:basic:complex128", i32 0, i32 0), i8* undef }, i8* %0, 1
+  call void @runtime.trackPointer(i8* getelementptr inbounds ({ i8, i8* }, { i8, i8* }* @"reflect/types.type:basic:complex128", i32 0, i32 0), i8* undef) #0
   call void @runtime.trackPointer(i8* nonnull %0, i8* undef) #0
   ret %runtime._interface %2
 }

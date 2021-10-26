@@ -54,10 +54,11 @@ type methodInfo struct {
 // typeInfo describes a single concrete Go type, which can be a basic or a named
 // type. If it is a named type, it may have methods.
 type typeInfo struct {
-	name      string
-	typecode  llvm.Value
-	methodSet llvm.Value
-	methods   []*methodInfo
+	name        string
+	typecode    llvm.Value
+	typecodeGEP llvm.Value
+	methodSet   llvm.Value
+	methods     []*methodInfo
 }
 
 // getMethod looks up the method on this type with the given signature and
@@ -91,6 +92,8 @@ type lowerInterfacesPass struct {
 	difiles     map[string]llvm.Metadata
 	ctx         llvm.Context
 	uintptrType llvm.Type
+	targetData  llvm.TargetData
+	i8ptrType   llvm.Type
 	types       map[string]*typeInfo
 	signatures  map[string]*signatureInfo
 	interfaces  map[string]*interfaceInfo
@@ -101,12 +104,16 @@ type lowerInterfacesPass struct {
 // before LLVM can work on them. This is done so that a few cleanup passes can
 // run before assigning the final type codes.
 func LowerInterfaces(mod llvm.Module, config *compileopts.Config) error {
+	ctx := mod.Context()
+	targetData := llvm.NewTargetData(mod.DataLayout())
 	p := &lowerInterfacesPass{
 		mod:         mod,
 		config:      config,
-		builder:     mod.Context().NewBuilder(),
-		ctx:         mod.Context(),
-		uintptrType: mod.Context().IntType(llvm.NewTargetData(mod.DataLayout()).PointerSize() * 8),
+		builder:     ctx.NewBuilder(),
+		ctx:         ctx,
+		targetData:  targetData,
+		uintptrType: ctx.IntType(targetData.PointerSize() * 8),
+		i8ptrType:   llvm.PointerType(ctx.Int8Type(), 0),
 		types:       make(map[string]*typeInfo),
 		signatures:  make(map[string]*signatureInfo),
 		interfaces:  make(map[string]*interfaceInfo),
@@ -147,11 +154,26 @@ func (p *lowerInterfacesPass) run() error {
 				}
 				p.types[name] = t
 				initializer := global.Initializer()
-				if initializer.IsNil() {
-					continue
+				firstField := llvm.ConstExtractValue(initializer, []uint32{0})
+				if firstField.Type() != p.ctx.Int8Type() {
+					// This type has a method set at index 0. Change the GEP to
+					// point to index 1 (the meta byte).
+					t.typecodeGEP = llvm.ConstGEP(global, []llvm.Value{
+						llvm.ConstInt(p.ctx.Int32Type(), 0, false),
+						llvm.ConstInt(p.ctx.Int32Type(), 1, false),
+					})
+					methodSet := firstField.Operand(0)
+					if !strings.HasSuffix(methodSet.Name(), "$methodset") {
+						panic("expected method set")
+					}
+					p.addTypeMethods(t, methodSet)
+				} else {
+					// This type has no method set.
+					t.typecodeGEP = llvm.ConstGEP(global, []llvm.Value{
+						llvm.ConstInt(p.ctx.Int32Type(), 0, false),
+						llvm.ConstInt(p.ctx.Int32Type(), 0, false),
+					})
 				}
-				methodSet := llvm.ConstExtractValue(initializer, []uint32{2})
-				p.addTypeMethods(t, methodSet)
 			}
 		}
 	}
@@ -265,7 +287,7 @@ func (p *lowerInterfacesPass) run() error {
 			// The type exists in the program, so lower to a regular integer
 			// comparison.
 			p.builder.SetInsertPointBefore(use)
-			commaOk := p.builder.CreateICmp(llvm.IntEQ, llvm.ConstPtrToInt(t.typecode, p.uintptrType), actualType, "typeassert.ok")
+			commaOk := p.builder.CreateICmp(llvm.IntEQ, t.typecodeGEP, actualType, "typeassert.ok")
 			use.ReplaceAllUsesWith(commaOk)
 		} else {
 			// The type does not exist in the program, so lower to a constant
@@ -279,15 +301,45 @@ func (p *lowerInterfacesPass) run() error {
 	}
 
 	// Remove all method sets, which are now unnecessary and inhibit later
-	// optimizations if they are left in place. Also remove references to the
-	// interface type assert functions just to be sure.
-	zeroUintptr := llvm.ConstNull(p.uintptrType)
+	// optimizations if they are left in place.
+	zero := llvm.ConstInt(p.ctx.Int32Type(), 0, false)
 	for _, t := range p.types {
-		initializer := t.typecode.Initializer()
-		methodSet := llvm.ConstExtractValue(initializer, []uint32{2})
-		initializer = llvm.ConstInsertValue(initializer, llvm.ConstNull(methodSet.Type()), []uint32{2})
-		initializer = llvm.ConstInsertValue(initializer, zeroUintptr, []uint32{4})
-		t.typecode.SetInitializer(initializer)
+		if !t.methodSet.IsNil() {
+			initializer := t.typecode.Initializer()
+			var newInitializerFields []llvm.Value
+			for i := 1; i < initializer.Type().StructElementTypesCount(); i++ {
+				newInitializerFields = append(newInitializerFields, llvm.ConstExtractValue(initializer, []uint32{uint32(i)}))
+			}
+			newInitializer := p.ctx.ConstStruct(newInitializerFields, false)
+			typecodeName := t.typecode.Name()
+			newGlobal := llvm.AddGlobal(p.mod, newInitializer.Type(), typecodeName+".tmp")
+			newGlobal.SetInitializer(newInitializer)
+			newGlobal.SetLinkage(t.typecode.Linkage())
+			newGlobal.SetGlobalConstant(true)
+			newGlobal.SetAlignment(t.typecode.Alignment())
+			for _, use := range getUses(t.typecode) {
+				if !use.IsAConstantExpr().IsNil() {
+					opcode := use.Opcode()
+					if opcode == llvm.GetElementPtr && use.OperandsCount() == 3 {
+						if use.Operand(1).ZExtValue() == 0 && use.Operand(2).ZExtValue() == 1 {
+							gep := llvm.ConstInBoundsGEP(newGlobal, []llvm.Value{zero, zero})
+							use.ReplaceAllUsesWith(gep)
+						}
+					}
+				}
+			}
+			// Fallback.
+			if hasUses(t.typecode) {
+				bitcast := llvm.ConstBitCast(newGlobal, p.i8ptrType)
+				negativeOffset := -int64(p.targetData.TypeAllocSize(p.i8ptrType))
+				gep := llvm.ConstInBoundsGEP(bitcast, []llvm.Value{llvm.ConstInt(p.ctx.Int32Type(), uint64(negativeOffset), true)})
+				bitcast2 := llvm.ConstBitCast(gep, t.typecode.Type())
+				t.typecode.ReplaceAllUsesWith(bitcast2)
+			}
+			t.typecode.EraseFromParentAsGlobal()
+			newGlobal.SetName(typecodeName)
+			t.typecode = newGlobal
+		}
 	}
 
 	return nil
@@ -297,20 +349,21 @@ func (p *lowerInterfacesPass) run() error {
 // retrieves the signatures and the references to the method functions
 // themselves for later type<->interface matching.
 func (p *lowerInterfacesPass) addTypeMethods(t *typeInfo, methodSet llvm.Value) {
-	if !t.methodSet.IsNil() || methodSet.IsNull() {
+	if !t.methodSet.IsNil() {
 		// no methods or methods already read
 		return
 	}
-	methodSet = methodSet.Operand(0) // get global from GEP
 
 	// This type has methods, collect all methods of this type.
 	t.methodSet = methodSet
 	set := methodSet.Initializer() // get value from global
-	for i := 0; i < set.Type().ArrayLength(); i++ {
-		methodData := llvm.ConstExtractValue(set, []uint32{uint32(i)})
-		signatureGlobal := llvm.ConstExtractValue(methodData, []uint32{0})
+	signatures := llvm.ConstExtractValue(set, []uint32{1})
+	wrappers := llvm.ConstExtractValue(set, []uint32{2})
+	numMethods := signatures.Type().ArrayLength()
+	for i := 0; i < numMethods; i++ {
+		signatureGlobal := llvm.ConstExtractValue(signatures, []uint32{uint32(i)})
+		function := llvm.ConstExtractValue(wrappers, []uint32{uint32(i)})
 		signatureName := signatureGlobal.Name()
-		function := llvm.ConstExtractValue(methodData, []uint32{1}).Operand(0)
 		signature := p.getSignature(signatureName)
 		method := &methodInfo{
 			function:      function,
@@ -395,7 +448,7 @@ func (p *lowerInterfacesPass) defineInterfaceImplementsFunc(fn llvm.Value, itf *
 	actualType := fn.Param(0)
 	for _, typ := range itf.types {
 		nextBlock := p.ctx.AddBasicBlock(fn, typ.name+".next")
-		cmp := p.builder.CreateICmp(llvm.IntEQ, actualType, llvm.ConstPtrToInt(typ.typecode, p.uintptrType), typ.name+".icmp")
+		cmp := p.builder.CreateICmp(llvm.IntEQ, actualType, typ.typecodeGEP, typ.name+".icmp")
 		p.builder.CreateCondBr(cmp, thenBlock, nextBlock)
 		p.builder.SetInsertPointAtEnd(nextBlock)
 	}
@@ -434,7 +487,7 @@ func (p *lowerInterfacesPass) defineInterfaceMethodFunc(fn llvm.Value, itf *inte
 		params[i] = fn.Param(i + 1)
 	}
 	params = append(params,
-		llvm.Undef(llvm.PointerType(p.ctx.Int8Type(), 0)),
+		llvm.Undef(p.i8ptrType),
 	)
 
 	// Start chain in the entry block.
@@ -466,7 +519,7 @@ func (p *lowerInterfacesPass) defineInterfaceMethodFunc(fn llvm.Value, itf *inte
 		// Create type check (if/else).
 		bb := p.ctx.AddBasicBlock(fn, typ.name)
 		next := p.ctx.AddBasicBlock(fn, typ.name+".next")
-		cmp := p.builder.CreateICmp(llvm.IntEQ, actualType, llvm.ConstPtrToInt(typ.typecode, p.uintptrType), typ.name+".icmp")
+		cmp := p.builder.CreateICmp(llvm.IntEQ, actualType, typ.typecodeGEP, typ.name+".icmp")
 		p.builder.CreateCondBr(cmp, bb, next)
 
 		// The function we will redirect to when the interface has this type.
@@ -515,7 +568,7 @@ func (p *lowerInterfacesPass) defineInterfaceMethodFunc(fn llvm.Value, itf *inte
 	// method on a nil interface.
 	nilPanic := p.mod.NamedFunction("runtime.nilPanic")
 	p.builder.CreateCall(nilPanic, []llvm.Value{
-		llvm.Undef(llvm.PointerType(p.ctx.Int8Type(), 0)),
+		llvm.Undef(p.i8ptrType),
 	}, "")
 	p.builder.CreateUnreachable()
 }

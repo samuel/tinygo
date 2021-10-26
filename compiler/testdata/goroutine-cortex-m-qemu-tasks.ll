@@ -162,7 +162,7 @@ entry:
 declare void @runtime.chanClose(%runtime.channel* dereferenceable_or_null(32), i8*)
 
 ; Function Attrs: nounwind
-define hidden void @main.startInterfaceMethod(i32 %itf.typecode, i8* %itf.value, i8* %context) unnamed_addr #0 {
+define hidden void @main.startInterfaceMethod(i8* %itf.typecode, i8* %itf.value, i8* %context) unnamed_addr #0 {
 entry:
   %0 = call i8* @runtime.alloc(i32 16, i8* null, i8* undef) #0
   %1 = bitcast i8* %0 to i8**
@@ -174,14 +174,14 @@ entry:
   %3 = bitcast i8* %.repack1 to i32*
   store i32 4, i32* %3, align 4
   %4 = getelementptr inbounds i8, i8* %0, i32 12
-  %5 = bitcast i8* %4 to i32*
-  store i32 %itf.typecode, i32* %5, align 4
+  %5 = bitcast i8* %4 to i8**
+  store i8* %itf.typecode, i8** %5, align 4
   %stacksize = call i32 @"internal/task.getGoroutineStackSize"(i32 ptrtoint (void (i8*)* @"interface:{Print:func:{basic:string}{}}.Print$invoke$gowrapper" to i32), i8* undef) #0
   call void @"internal/task.start"(i32 ptrtoint (void (i8*)* @"interface:{Print:func:{basic:string}{}}.Print$invoke$gowrapper" to i32), i8* nonnull %0, i32 %stacksize, i8* undef) #0
   ret void
 }
 
-declare void @"interface:{Print:func:{basic:string}{}}.Print$invoke"(i8*, i8*, i32, i32, i8*) #5
+declare void @"interface:{Print:func:{basic:string}{}}.Print$invoke"(i8*, i8*, i32, i8*, i8*) #5
 
 ; Function Attrs: nounwind
 define linkonce_odr void @"interface:{Print:func:{basic:string}{}}.Print$invoke$gowrapper"(i8* %0) unnamed_addr #6 {
@@ -195,9 +195,9 @@ entry:
   %7 = bitcast i8* %6 to i32*
   %8 = load i32, i32* %7, align 4
   %9 = getelementptr inbounds i8, i8* %0, i32 12
-  %10 = bitcast i8* %9 to i32*
-  %11 = load i32, i32* %10, align 4
-  call void @"interface:{Print:func:{basic:string}{}}.Print$invoke"(i8* %2, i8* %5, i32 %8, i32 %11, i8* undef) #0
+  %10 = bitcast i8* %9 to i8**
+  %11 = load i8*, i8** %10, align 4
+  call void @"interface:{Print:func:{basic:string}{}}.Print$invoke"(i8* %2, i8* %5, i32 %8, i8* %11, i8* undef) #0
   ret void
 }
 

@@ -325,11 +325,11 @@ func printitf(msg interface{}) {
 		putchar('(')
 		switch unsafe.Sizeof(itf.typecode) {
 		case 2:
-			printuint16(uint16(itf.typecode))
+			printuint16(uint16(uintptr(itf.typecode)))
 		case 4:
-			printuint32(uint32(itf.typecode))
+			printuint32(uint32(uintptr(itf.typecode)))
 		case 8:
-			printuint64(uint64(itf.typecode))
+			printuint64(uint64(uintptr(itf.typecode)))
 		}
 		putchar(':')
 		print(itf.value)

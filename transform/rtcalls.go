@@ -113,9 +113,6 @@ func OptimizeReflectImplements(mod llvm.Module) {
 	builder := mod.Context().NewBuilder()
 	defer builder.Dispose()
 
-	// Get a few useful object for use later.
-	uintptrType := mod.Context().IntType(llvm.NewTargetData(mod.DataLayout()).PointerSize() * 8)
-
 	// Look up the (reflect.Value).Implements() method.
 	var implementsFunc llvm.Value
 	for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
@@ -137,17 +134,15 @@ func OptimizeReflectImplements(mod llvm.Module) {
 		if call.IsACallInst().IsNil() {
 			continue
 		}
-		interfaceTypeBitCast := call.Operand(2)
-		if interfaceTypeBitCast.IsAConstantExpr().IsNil() || interfaceTypeBitCast.Opcode() != llvm.BitCast {
-			// The asserted interface is not constant, so can't optimize this
-			// code.
+		interfaceType := stripPointerCasts(call.Operand(2))
+		if interfaceType.IsAGlobalVariable().IsNil() {
+			// Interface is unknown at compile time. This can't be optimized.
 			continue
 		}
 
-		interfaceType := interfaceTypeBitCast.Operand(0)
 		if strings.HasPrefix(interfaceType.Name(), "reflect/types.type:named:") {
 			// Get the underlying type.
-			interfaceType = llvm.ConstExtractValue(interfaceType.Initializer(), []uint32{0})
+			interfaceType = stripPointerCasts(llvm.ConstExtractValue(interfaceType.Initializer(), []uint32{2}))
 		}
 		if !strings.HasPrefix(interfaceType.Name(), "reflect/types.type:interface:") {
 			// This is an error. The Type passed to Implements should be of
@@ -155,16 +150,15 @@ func OptimizeReflectImplements(mod llvm.Module) {
 			// reported at runtime.
 			continue
 		}
-		if interfaceType.IsAGlobalVariable().IsNil() {
-			// Interface is unknown at compile time. This can't be optimized.
+		typeAssertFunction := mod.NamedFunction(strings.TrimPrefix(interfaceType.Name(), "reflect/types.type:") + ".$typeassert")
+		if typeAssertFunction.IsNil() {
 			continue
 		}
-		typeAssertFunction := llvm.ConstExtractValue(interfaceType.Initializer(), []uint32{4}).Operand(0)
 
 		// Replace Implements call with the type assert call.
 		builder.SetInsertPointBefore(call)
 		implements := builder.CreateCall(typeAssertFunction, []llvm.Value{
-			builder.CreatePtrToInt(call.Operand(0), uintptrType, ""), // typecode to check
+			call.Operand(0), // typecode to check
 		}, "")
 		call.ReplaceAllUsesWith(implements)
 		call.EraseFromParentAsInstruction()

@@ -482,6 +482,14 @@ func (v pointerValue) addOffset(offset uint32) pointerValue {
 	return result
 }
 
+func (v pointerValue) subOffset(offset uint32) pointerValue {
+	result := pointerValue{v.pointer - uint64(offset)}
+	if checks && v.index() != result.index() {
+		panic("interp: offset out of range")
+	}
+	return result
+}
+
 func (v pointerValue) len(r *runner) uint32 {
 	return r.pointerSize
 }
