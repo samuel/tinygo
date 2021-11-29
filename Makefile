@@ -227,6 +227,7 @@ TEST_PACKAGES_BASE = \
 	container/ring \
 	crypto/des \
 	crypto/elliptic/internal/fiat \
+	crypto/hmac \
 	crypto/internal/subtle \
 	crypto/md5 \
 	crypto/rc4 \
@@ -254,10 +255,12 @@ TEST_PACKAGES_BASE = \
 	os \
 	path \
 	reflect \
+	strconv \
 	sync \
 	testing \
 	testing/iotest \
 	text/scanner \
+	text/template/parse \
 	unicode \
 	unicode/utf16 \
 	unicode/utf8 \
