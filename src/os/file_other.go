@@ -37,7 +37,8 @@ func NewFile(fd FileHandle, name string) *File {
 	return &File{&file{fd, name}}
 }
 
-// Read is unsupported on this system.
+// Read reads up to len(b) bytes from machine.Serial.
+// It returns the number of bytes read and any error encountered.
 func (f stdioFileHandle) Read(b []byte) (n int, err error) {
 	return machine.Serial.Read(b)
 }
