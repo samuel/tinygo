@@ -4,7 +4,6 @@
 package os
 
 import (
-	"machine"
 	_ "unsafe"
 )
 
@@ -40,7 +39,18 @@ func NewFile(fd FileHandle, name string) *File {
 // Read reads up to len(b) bytes from machine.Serial.
 // It returns the number of bytes read and any error encountered.
 func (f stdioFileHandle) Read(b []byte) (n int, err error) {
-	return machine.Serial.Read(b)
+	size := 0
+	for size == 0 {
+		size = buffered()
+	}
+
+	if size > len(b) {
+		size = len(b)
+	}
+	for i := 0; i < size; i++ {
+		b[i] = getchar()
+	}
+	return size, nil
 }
 
 func (f stdioFileHandle) ReadAt(b []byte, off int64) (n int, err error) {
@@ -73,6 +83,12 @@ func (f stdioFileHandle) Seek(offset int64, whence int) (int64, error) {
 
 //go:linkname putchar runtime.putchar
 func putchar(c byte)
+
+//go:linkname getchar runtime.getchar
+func getchar() byte
+
+//go:linkname buffered runtime.buffered
+func buffered() int
 
 func Pipe() (r *File, w *File, err error) {
 	return nil, nil, ErrNotImplemented
