@@ -45,6 +45,7 @@ type Options struct {
 	OpenOCDCommands []string
 	LLVMFeatures    string
 	Directory       string
+	OpenOCDVerify   bool
 }
 
 // Verify performs a validation on the given options, raising an error if options are not valid.

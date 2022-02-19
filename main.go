@@ -439,7 +439,11 @@ func Flash(pkgName, port string, options *compileopts.Options) error {
 			if err != nil {
 				return err
 			}
-			args = append(args, "-c", "program "+filepath.ToSlash(result.Binary)+" reset exit")
+			exit := " reset exit"
+			if config.Options.OpenOCDVerify {
+				exit = " verify" + exit
+			}
+			args = append(args, "-c", "program "+filepath.ToSlash(result.Binary)+exit)
 			cmd := executeCommand(config.Options, "openocd", args...)
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr
@@ -1200,6 +1204,7 @@ func main() {
 	nodebug := flag.Bool("no-debug", false, "strip debug information")
 	ocdCommandsString := flag.String("ocd-commands", "", "OpenOCD commands, overriding target spec (can specify multiple separated by commas)")
 	ocdOutput := flag.Bool("ocd-output", false, "print OCD daemon output during debug")
+	ocdVerify := flag.Bool("ocd-verify", false, "verify after program")
 	port := flag.String("port", "", "flash port (can specify multiple candidates separated by commas)")
 	programmer := flag.String("programmer", "", "which hardware programmer to use")
 	ldflags := flag.String("ldflags", "", "Go link tool compatible ldflags")
@@ -1289,6 +1294,7 @@ func main() {
 		Programmer:      *programmer,
 		OpenOCDCommands: ocdCommands,
 		LLVMFeatures:    *llvmFeatures,
+		OpenOCDVerify:   *ocdVerify,
 	}
 	if *printCommands {
 		options.PrintCommands = printCommand
